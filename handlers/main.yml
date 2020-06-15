@@ -1,0 +1,9 @@
+- name: reload node_exporter
+  systemd:
+    name: node_exporter
+    state: reloaded
+- name: restart node_exporter
+  systemd:
+    name: node_exporter
+    daemon_reload: "{{ _node_exporter_systemd | default ({}) is changed }}"
+    state: restarted

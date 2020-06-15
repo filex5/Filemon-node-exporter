@@ -1,0 +1,4 @@
+node_exporter_remove_src: true
+node_exporter_upgrade: false
+node_exporter_version: 1.0.0
+node_exporter_web_listen_address: "192.168.1.22:9100"

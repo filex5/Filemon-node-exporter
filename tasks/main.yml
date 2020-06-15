@@ -1,0 +1,112 @@
+- name: Get github releases
+  uri:
+    url: https://api.github.com/repos/prometheus/node_exporter/releases/latest
+    return_content: true
+  register: _node_exporter_github_releases
+  check_mode: false
+
+- name: Get latest version
+  set_fact:
+    _node_exporter_latest_version: "{{ _node_exporter_github_releases.json.tag_name | replace('v', '') }}"
+    _node_exporter_download_url: "{{ _node_exporter_github_releases.json.assets | map(attribute='browser_download_url') | select('match', '.*linux-amd64.*') | first }}"
+
+- name: Check latest version
+  debug:
+    msg: |
+      Node_exporter version to be installed is {{ node_exporter_version }}.
+      The latest Node_exporter version is {{ _node_exporter_latest_version }}.
+      To upgrade set node_exporter_version variable and use "-e node_exporter_upgrade=true"
+  changed_when: node_exporter_version | string != _node_exporter_latest_version | string
+
+- name: Check if node_exporter is installed
+  stat:
+    path: /usr/local/bin/node_exporter
+  register: _node_exporter_binary
+
+- name: Set node_exporter_upgrade variable
+  set_fact:
+    node_exporter_upgrade: true
+  when: not _node_exporter_binary.stat.exists | bool
+
+- name: Set node_exporter download url
+  set_fact:
+    _node_exporter_download_url: "{{ _node_exporter_download_url | replace(_node_exporter_latest_version, node_exporter_version) }}"
+  when: node_exporter_version | string != _node_exporter_latest_version | string
+
+- name: Add node_exporter user
+  user:
+    name: node_exporter
+    system: true
+    create_home: false
+    shell: /usr/sbin/nologin
+
+- name: Add /var/lib/node_exporter directories
+  file:
+    name: "{{ item }}"
+    owner: node_exporter
+    group: node_exporter
+    mode: 0750
+    state: directory
+  loop:
+    - /var/lib/node_exporter
+  when: node_exporter_upgrade | bool
+
+- name: Download node_exporter release
+  get_url:
+    url: "{{ _node_exporter_download_url }}"
+    dest: /var/lib/node_exporter/node_exporter-{{ node_exporter_version }}.tar.gz
+  when: node_exporter_upgrade | bool
+
+- name: Unarchive node_exporter release
+  unarchive:
+    src: /var/lib/node_exporter/node_exporter-{{ node_exporter_version }}.tar.gz
+    dest: /var/lib/node_exporter/
+    remote_src: true
+    creates: /var/lib/node_exporter/node_exporter-{{ node_exporter_version }}.linux-amd64
+  when: node_exporter_upgrade | bool
+
+
+
+- name: Add /usr/local/bin files
+  copy:
+    src: /var/lib/node_exporter/node_exporter-{{ node_exporter_version }}.linux-amd64/{{ item }}
+    dest: /usr/local/bin/{{ item }}
+    remote_src: true
+    owner: root
+    group: root
+    mode: 0755
+  loop:
+    - node_exporter
+  when: node_exporter_upgrade | bool
+
+- name: Remove /var/lib/node_exporter directory
+  file:
+    name: /var/lib/node_exporter
+    state: absent
+  when: node_exporter_remove_src | bool
+
+
+- name: Add /etc/systemd/system/node_exporter.service file
+  template:
+    src: node_exporter.service.j2
+    dest: /etc/systemd/system/node_exporter.service
+    owner: root
+    group: root
+    mode: 0644
+  register: _node_exporter_systemd
+  notify: restart node_exporter
+  tags:
+    - node_exporter-service
+
+- meta: flush_handlers
+
+- name: Start node_exporter service
+  systemd:
+    name: node_exporter
+    enabled: true
+    state: started
+
+- name: Check if service is running
+  command: >
+    /bin/systemctl is-active node_exporter
+  changed_when: false
